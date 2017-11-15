@@ -12,12 +12,17 @@ services:
     restart: on-failure:5
     ports:
       - "127.0.0.1:9090:9090/tcp"
+    expose:
+      - "9090"
     networks:
       br0:
         ipv4_address: 172.18.1.2
-    environment:
-      - storage.local.retention=62d
-      - storage.local.series-file-shrink-ratio=0.3
+    command:
+      --config.file=/etc/prometheus/prometheus.yml
+      --storage.tsdb.path=/prometheus
+      --storage.tsdb.retention=62d
+      --web.console.libraries=/usr/share/prometheus/console_libraries
+      --web.console.templates=/usr/share/prometheus/consoles
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
@@ -61,10 +66,13 @@ services:
     ports:
       - "127.0.0.1:9103:9103/tcp"
       - "127.0.0.1:25826:25826/udp"
+    expose:
+      - "25826"
+      - "9103"
     networks:
       br0:
         ipv4_address: 172.18.1.4
-    command: -collectd.listen-address=":25826"
+    command: --collectd.listen-address=":25826"
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
@@ -94,6 +102,8 @@ services:
     restart: on-failure:5
     ports:
       - "127.0.0.1:5432:5432"
+    expose:
+      - "5432"
     networks:
       br0:
         ipv4_address: 172.18.1.6
