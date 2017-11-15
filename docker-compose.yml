@@ -1,0 +1,181 @@
+version: "3.4"
+# Containers as a Services
+services:
+# ------------------------------------------------------------------------------
+  # Prometheus container
+  prometheus:
+    container_name: prometheus
+    image: quay.io/prometheus/prometheus:latest
+    depends_on:
+      - prometheus_collectd
+      - prometheus_snmp
+    restart: on-failure:5
+    ports:
+      - "127.0.0.1:9090:9090/tcp"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.2
+    environment:
+      - storage.local.retention=62d
+      - storage.local.series-file-shrink-ratio=0.3
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+    volumes:
+      - type: bind
+        source: /home/engineer/prometheus_data
+        target: /prometheus
+      - type: bind
+        source: /home/engineer/prometheus_confs
+        target: /etc/prometheus
+# ------------------------------------------------------------------------------
+  # Prometheus Alertmanager container
+  prometheus_alertmanager:
+    container_name: prometheus_alertmanager
+    image: quay.io/prometheus/alertmanager:latest
+    depends_on:
+      - prometheus
+    restart: on-failure:5
+    ports:
+      - "127.0.0.1:9093:9093/tcp"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.3
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+    volumes:
+      - type: bind
+        source: /home/engineer/prometheus_confs
+        target: /alertmanager/
+# ------------------------------------------------------------------------------
+  # Collectd Prometheus Exporter container
+  prometheus_collectd:
+    container_name: prometheus_collectd
+    image: prom/collectd-exporter:latest
+    restart: on-failure:5
+    ports:
+      - "127.0.0.1:9103:9103/tcp"
+      - "127.0.0.1:25826:25826/udp"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.4
+    command: -collectd.listen-address=":25826"
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+# ------------------------------------------------------------------------------
+  # SNMP Prometheus Exporter container
+  prometheus_snmp:
+    container_name: prometheus_snmp
+    image: prom/snmp-exporter:latest
+    restart: on-failure:5
+    ports:
+      - "127.0.0.1:9116:9116"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.5
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+# ------------------------------------------------------------------------------
+  # timescale/PostgreSQL container
+  prometheus_postgres:
+    container_name: prometheus_postgres
+    image: timescale/pg_prometheus:master
+    restart: on-failure:5
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.6
+    environment:
+    - "TZ=Europe/Moscow"
+    - csynchronous_commit=off
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+    volumes:
+      - type: bind
+        source: /home/engineer/postgres_data
+        target: /var/lib/postgresql/data
+# ------------------------------------------------------------------------------
+  # Prometheus to PostgreSQL Adapter container
+  prometheus_adapter:
+    container_name: prometheus_adapter
+    image: timescale/prometheus-postgresql-adapter:latest
+    depends_on:
+      - prometheus_postgres
+      - prometheus
+    restart: on-failure:5
+    networks:
+      br0:
+        ipv4_address: 172.18.1.7
+    command: -pg-host=prometheus_postgres -pg-prometheus-log-samples -pg-use-timescaledb=false
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 1m
+      retries: 5
+# ------------------------------------------------------------------------------
+  # Grafana container
+  grafana:
+    container_name: grafana
+    image: grafana/grafana
+    restart: on-failure:5
+    ports:
+     - "127.0.0.1:3000:3000"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.10
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+    volumes:
+      - type: bind
+        source: /home/engineer/grafana_confs
+        target: /var/lib/grafana
+      - type: bind
+        source: /home/engineer/grafana_confs
+        target: /etc/grafana/
+      - type: bind
+        source: /home/engineer/grafana_confs
+        target: /var/log/grafana
+# ------------------------------------------------------------------------------
+  # Portainer container
+  portainer:
+    container_name: portainer
+    image: portainer/portainer:latest
+    restart: on-failure:5
+    ports:
+      - "127.0.0.1:9000:9000"
+    networks:
+      - br0
+    volumes:
+      - type: bind
+        source: /home/engineer/portainer_data
+        target: /data
+      - "/var/run/docker.sock:/var/run/docker.sock"
+# ------------------------------------------------------------------------------
+# networking settings
+networks:
+  br0:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+      - subnet: 172.18.0.0/16
