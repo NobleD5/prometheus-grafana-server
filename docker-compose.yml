@@ -28,6 +28,7 @@ services:
       interval: 1m
       timeout: 3m
       retries: 5
+    stop_grace_period: 2m
     volumes:
       - type: bind
         source: /home/engineer/prometheus_data
@@ -53,6 +54,7 @@ services:
       interval: 1m
       timeout: 3m
       retries: 5
+    stop_grace_period: 1m
     volumes:
       - type: bind
         source: /home/engineer/prometheus_confs
@@ -72,7 +74,9 @@ services:
     networks:
       br0:
         ipv4_address: 172.18.1.4
-    command: --collectd.listen-address=":25826"
+    command:
+      --collectd.listen-address=":25826"
+    stop_grace_period: 1m
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
@@ -89,6 +93,7 @@ services:
     networks:
       br0:
         ipv4_address: 172.18.1.5
+    stop_grace_period: 1m
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
@@ -108,13 +113,15 @@ services:
       br0:
         ipv4_address: 172.18.1.6
     environment:
-    - "TZ=Europe/Moscow"
-    - csynchronous_commit=off
+      - "TZ=Europe/Moscow"
+    command:
+      -csynchronous_commit=off
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
       timeout: 3m
       retries: 5
+    stop_grace_period: 2m
     volumes:
       - type: bind
         source: /home/engineer/postgres_data
@@ -131,12 +138,64 @@ services:
     networks:
       br0:
         ipv4_address: 172.18.1.7
-    command: -pg-host=prometheus_postgres -pg-prometheus-log-samples -pg-use-timescaledb=false
+    command:
+      -pg-host=prometheus_postgres
+      -pg-prometheus-log-samples
+      -pg-use-timescaledb=false
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
       timeout: 1m
       retries: 5
+    stop_grace_period: 1m
+# ------------------------------------------------------------------------------
+  # Snipe-IT container
+  snipe_it:
+    container_name: snipe_it
+    image: snipe/snipe-it:latest
+    depends_on:
+      - snipe_mysql
+    restart: on-failure:5
+    ports:
+      - "3030:80"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.8
+    env_file:
+      - snipe.env
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+    stop_grace_period: 1m
+    volumes:
+      - type: bind
+        source: /home/engineer/snipe_it_data
+        target: /var/lib/snipeit
+# ------------------------------------------------------------------------------
+  # MySQL for Snipe-IT container
+  snipe_mysql:
+    container_name: snipe_mysql
+    image: mysql:5.6
+    restart: on-failure:5
+    expose:
+      - "3306"
+    networks:
+      br0:
+        ipv4_address: 172.18.1.9
+    env_file:
+      - snipe.env
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 3m
+      retries: 5
+    stop_grace_period: 2m
+    volumes:
+      - type: bind
+        source: /home/engineer/snipe_mysql_data
+        target: /var/lib/mysql
 # ------------------------------------------------------------------------------
   # Grafana container
   grafana:
@@ -155,6 +214,7 @@ services:
       interval: 1m
       timeout: 3m
       retries: 5
+    stop_grace_period: 2m
     volumes:
       - type: bind
         source: /home/engineer/grafana_confs
@@ -175,6 +235,7 @@ services:
       - "127.0.0.1:9000:9000"
     networks:
       - br0
+    stop_grace_period: 1m
     volumes:
       - type: bind
         source: /home/engineer/portainer_data
