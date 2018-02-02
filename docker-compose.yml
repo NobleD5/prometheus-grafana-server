@@ -1,5 +1,5 @@
-version: "3.4"
-# Containers as a Services
+version: "2.3"
+
 services:
 # ------------------------------------------------------------------------------
   # Prometheus container
@@ -7,28 +7,42 @@ services:
     container_name: prometheus
     image: quay.io/prometheus/prometheus:latest
     depends_on:
-      - prometheus_collectd
-      - prometheus_snmp
+      prometheus_collectd:
+        condition: service_healthy
+      prometheus_snmp:
+        condition: service_healthy
     restart: on-failure:5
-    ports:
-      - "127.0.0.1:9090:9090/tcp"
     expose:
-      - "9090"
+      - "9090/tcp"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.port=9090"
+      - "traefik.protocol=http"
+      - "traefik.frontend.rule=Host:ces-admin.localhost;PathPrefixStrip:/prometheus"
     networks:
-      br0:
-        ipv4_address: 172.18.1.2
+      backend-network:
     command:
       --config.file=/etc/prometheus/prometheus.yml
       --storage.tsdb.path=/prometheus
       --storage.tsdb.retention=62d
       --web.console.libraries=/usr/share/prometheus/console_libraries
       --web.console.templates=/usr/share/prometheus/consoles
+      --web.external-url=/prometheus
+      --web.route-prefix=/
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
-      timeout: 3m
+      timeout: 1m
       retries: 5
     stop_grace_period: 2m
+    mem_limit: 2G
+    cpu_shares: 73
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
     volumes:
       - type: bind
         source: /home/engineer/prometheus_data
@@ -36,29 +50,101 @@ services:
       - type: bind
         source: /home/engineer/prometheus_confs
         target: /etc/prometheus
+        read_only: true
+# ------------------------------------------------------------------------------
+  # Prometheus Node-Exporter container
+  node-exporter:
+    container_name: node-exporter
+    image: prom/node-exporter:latest
+    restart: on-failure:5
+    expose:
+      - "9100"
+    labels:
+      - "traefik.enable=false"
+    networks:
+      backend-network:
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 30s
+      timeout: 15s
+      retries: 5
+    stop_grace_period: 1m
+    mem_limit: 512M
+    cpu_shares: 50
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+# ------------------------------------------------------------------------------
+  #  cAdvisor container
+  cadvisor:
+    container_name: cadvisor
+    image: google/cadvisor:latest
+    restart: on-failure:5
+    expose:
+      - "8080"
+    labels:
+      - "traefik.enable=false"
+    networks:
+      backend-network:
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 30s
+      timeout: 15s
+      retries: 5
+    stop_grace_period: 1m
+    mem_limit: 512M
+    cpu_shares: 50
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
 # ------------------------------------------------------------------------------
   # Prometheus Alertmanager container
   prometheus_alertmanager:
     container_name: prometheus_alertmanager
     image: quay.io/prometheus/alertmanager:latest
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
     restart: on-failure:5
-    ports:
-      - "127.0.0.1:9093:9093/tcp"
+    expose:
+      - "9093/tcp"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.port=9093"
+      - "traefik.protocol=http"
+      - "traefik.frontend.rule=Host:ces-admin.localhost;PathPrefixStrip:/alertmanager"
     networks:
-      br0:
-        ipv4_address: 172.18.1.3
+      backend-network:
+    command:
+      --config.file=/alertmanager/alertmanager.yml
+      --storage.path=/alertmanager
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
-      interval: 1m
-      timeout: 3m
+      interval: 30s
+      timeout: 15s
       retries: 5
     stop_grace_period: 1m
+    mem_limit: 512M
+    cpu_shares: 50
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
     volumes:
-      - type: bind
-        source: /home/engineer/prometheus_confs
-        target: /alertmanager/
+      - /home/engineer/prometheus_confs:/alertmanager:rw
 # ------------------------------------------------------------------------------
   # Collectd Prometheus Exporter container
   prometheus_collectd:
@@ -69,36 +155,61 @@ services:
       - "127.0.0.1:9103:9103/tcp"
       - "127.0.0.1:25826:25826/udp"
     expose:
-      - "25826"
-      - "9103"
+      - "25826/udp"
+      - "9103/tcp"
+    labels:
+      - "traefik.enable=false"
     networks:
-      br0:
-        ipv4_address: 172.18.1.4
+      backend-network:
     command:
       --collectd.listen-address=":25826"
-    stop_grace_period: 1m
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
-      interval: 1m
-      timeout: 3m
+      interval: 30s
+      timeout: 15s
       retries: 5
+    stop_grace_period: 1m
+    mem_limit: 512M
+    cpu_shares: 50
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
 # ------------------------------------------------------------------------------
   # SNMP Prometheus Exporter container
   prometheus_snmp:
     container_name: prometheus_snmp
     image: prom/snmp-exporter:latest
     restart: on-failure:5
-    ports:
-      - "127.0.0.1:9116:9116"
+    expose:
+      - "9116"
+    labels:
+      - "traefik.enable=false"
     networks:
-      br0:
-        ipv4_address: 172.18.1.5
-    stop_grace_period: 1m
+      backend-network:
+    command:
+      --config.file=/etc/snmp_exporter/snmp.yml
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
-      interval: 1m
-      timeout: 3m
+      interval: 30s
+      timeout: 15s
       retries: 5
+    stop_grace_period: 1m
+    mem_limit: 512M
+    cpu_shares: 50
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+    volumes:
+      - type: bind
+        source: /home/engineer/prometheus_confs
+        target: /etc/snmp_exporter/
+        read_only: true
 # ------------------------------------------------------------------------------
   # timescale/PostgreSQL container
   prometheus_postgres:
@@ -109,9 +220,10 @@ services:
       - "127.0.0.1:5432:5432"
     expose:
       - "5432"
+    labels:
+      - "traefik.enable=false"
     networks:
-      br0:
-        ipv4_address: 172.18.1.6
+      backend-network:
     environment:
       - "TZ=Europe/Moscow"
     command:
@@ -119,134 +231,372 @@ services:
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
-      timeout: 3m
+      timeout: 1m
       retries: 5
     stop_grace_period: 2m
+    mem_limit: 8G
+    cpu_shares: 73
+    cpu_quota: 50000
+    # read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
     volumes:
-      - type: bind
-        source: /home/engineer/postgres_data
-        target: /var/lib/postgresql/data
+      - /home/engineer/postgres_data:/var/lib/postgresql/data
 # ------------------------------------------------------------------------------
   # Prometheus to PostgreSQL Adapter container
   prometheus_adapter:
     container_name: prometheus_adapter
     image: timescale/prometheus-postgresql-adapter:latest
     depends_on:
-      - prometheus_postgres
-      - prometheus
+      prometheus_postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
     restart: on-failure:5
+    expose:
+      - "9201"
+    labels:
+      - "traefik.enable=false"
     networks:
-      br0:
-        ipv4_address: 172.18.1.7
+      backend-network:
     command:
       -pg-host=prometheus_postgres
       -pg-prometheus-log-samples
       -pg-use-timescaledb=false
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
+      interval: 30s
+      timeout: 15s
+      retries: 5
+    stop_grace_period: 1m
+    mem_limit: 512M
+    cpu_shares: 73
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+# ------------------------------------------------------------------------------
+  # Prometheus Alertmanager bot container
+  prometheus_telebot:
+    container_name: prometheus_telebot
+    image: rutsky/prometheus_bot:0.0.4
+    depends_on:
+      prometheus_alertmanager:
+        condition: service_healthy
+    restart: on-failure:5
+    expose:
+      - "9087"
+    labels:
+      - "traefik.enable=false"
+    networks:
+      backend-network:
+    command:
+      -c "./conf/config.yml"
+      # -t "./conf/template/default.tmpl"
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 10s
+      timeout: 15s
+      retries: 5
+    stop_grace_period: 1m
+    mem_limit: 128M
+    cpu_shares: 20
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+    volumes:
+      - /home/engineer/prometheus_confs:/conf/
+# ------------------------------------------------------------------------------
+  # Snipe-IT container
+  snipeit:
+    container_name: snipeit
+    image: snipe/snipe-it:v4.1.10
+    depends_on:
+      snipeit_db:
+        condition: service_healthy
+    restart: on-failure:5
+    expose:
+      - "80"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.port=80"
+      - "traefik.protocol=http"
+      - "traefik.frontend.rule=Host:ces-assets.localhost"
+    networks:
+      backend-network:
+    env_file:
+      - snipe.env
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
       interval: 1m
       timeout: 1m
       retries: 5
     stop_grace_period: 1m
-# ------------------------------------------------------------------------------
-  # Snipe-IT container
-  snipe_it:
-    container_name: snipe_it
-    image: snipe/snipe-it:latest
-    depends_on:
-      - snipe_mysql
-    restart: on-failure:5
-    ports:
-      - "3030:80"
-    networks:
-      br0:
-        ipv4_address: 172.18.1.8
-    env_file:
-      - snipe.env
-    healthcheck:
-      test: 'stat /etc/passwd || exit 1'
-      interval: 1m
-      timeout: 3m
-      retries: 5
-    stop_grace_period: 1m
+    mem_limit: 512M
+    cpu_shares: 20
+    cpu_quota: 50000
+    # read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
     volumes:
-      - type: bind
-        source: /home/engineer/snipe_it_data
-        target: /var/lib/snipeit
+      - /home/engineer/snipe_it_data:/var/lib/snipeit
 # ------------------------------------------------------------------------------
   # MySQL for Snipe-IT container
-  snipe_mysql:
-    container_name: snipe_mysql
+  snipeit_db:
+    container_name: snipeit_db
     image: mysql:5.6
     restart: on-failure:5
     expose:
       - "3306"
+    labels:
+      - "traefik.enable=false"
     networks:
-      br0:
-        ipv4_address: 172.18.1.9
+      backend-network:
     env_file:
       - snipe.env
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
-      timeout: 3m
+      timeout: 1m
       retries: 5
     stop_grace_period: 2m
+    mem_limit: 1G
+    cpu_shares: 20
+    cpu_quota: 50000
+    # read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
     volumes:
-      - type: bind
-        source: /home/engineer/snipe_mysql_data
-        target: /var/lib/mysql
+      - /home/engineer/snipe_mysql_data:/var/lib/mysql
 # ------------------------------------------------------------------------------
   # Grafana container
   grafana:
     container_name: grafana
-    image: grafana/grafana
+    image: grafana/grafana:latest
     restart: on-failure:5
-    ports:
-     - "127.0.0.1:3000:3000"
+    expose:
+      - "3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.port=3000"
+      - "traefik.protocol=http"
+      - "traefik.frontend.rule=Host:grafana.localhost,ces.localhost,172.20.32.194"
     networks:
-      br0:
-        ipv4_address: 172.18.1.10
+      backend-network:
     environment:
       - GF_INSTALL_PLUGINS=grafana-clock-panel
     healthcheck:
       test: 'stat /etc/passwd || exit 1'
       interval: 1m
-      timeout: 3m
+      timeout: 1m
       retries: 5
     stop_grace_period: 2m
+    mem_limit: 512M
+    cpu_shares: 73
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
     volumes:
-      - type: bind
-        source: /home/engineer/grafana_confs
-        target: /var/lib/grafana
-      - type: bind
-        source: /home/engineer/grafana_confs
-        target: /etc/grafana/
-      - type: bind
-        source: /home/engineer/grafana_confs
-        target: /var/log/grafana
+      - /home/engineer/grafana_confs:/var/lib/grafana
+      - /home/engineer/grafana_confs:/var/log/grafana
+      - /home/engineer/grafana_confs:/etc/grafana/
+# ------------------------------------------------------------------------------
+  # Wekan-db container
+  wekan_db:
+    container_name: wekan_db
+    image: mongo:latest
+    restart: on-failure:5
+    expose:
+      - "27017"
+    labels:
+      - "traefik.enable=false"
+    networks:
+      backend-network:
+    command: mongod --smallfiles --oplogSize 128
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 30s
+      timeout: 15s
+      retries: 5
+    stop_grace_period: 2m
+    mem_limit: 512M
+    cpu_shares: 20
+    cpu_quota: 50000
+    # read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+    volumes:
+      - /home/engineer/wekan-db:/data/db
+      - /home/engineer/wekan-db/dump:/dump
+      - /home/engineer/wekan-db:/data/configdb
+# ------------------------------------------------------------------------------
+  # Wekan container
+  wekan:
+    container_name: wekan
+    image: wekanteam/wekan:latestdevel
+    depends_on:
+      wekan_db:
+        condition: service_healthy
+    restart: on-failure:5
+    expose:
+      - "80"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.port=80"
+      - "traefik.protocol=http"
+      - "traefik.frontend.rule=Host:ces-pm.localhost"
+    networks:
+      backend-network:
+    environment:
+      - MONGO_URL=mongodb://wekan_db:27017/wekan
+      - ROOT_URL=https://ces-pm.localhost
+      - MAIL_URL=smtp://wekan:wekan@smtp.localhost:25/
+      - MAIL_FROM='CES Process Management Support <ces-pm@localhost>'
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 1m
+      timeout: 1m
+      retries: 5
+    stop_grace_period: 2m
+    mem_limit: 512M
+    cpu_shares: 20
+    cpu_quota: 50000
+    read_only: true
+    privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+# ------------------------------------------------------------------------------
+  # traefik container
+  traefik:
+    container_name: traefik
+    image: traefik:1.5-alpine
+    restart: on-failure:5
+    ports:
+      - "80:80"
+      - "443:443"
+    expose:
+      - "8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.backend=traefik"
+      - "traefik.port=8080"
+      - "traefik.frontend.rule=Host:ces-admin.localhost"
+    networks:
+      frontend-network:
+      backend-network:
+    healthcheck:
+      test: 'traefik healthcheck || exit 1'
+      interval: 10s
+      timeout: 15s
+      retries: 5
+    stop_grace_period: 1m
+    mem_limit: 256M
+    cpu_shares: 73
+    cpu_quota: 50000
+    read_only: true
+    # privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+    volumes:
+      - /home/engineer/traefik_confs:/etc/traefik
+      - /home/engineer/traefik_confs:/etc/traefik/acme
+      - /var/run/docker.sock:/var/run/docker.sock
 # ------------------------------------------------------------------------------
   # Portainer container
   portainer:
     container_name: portainer
     image: portainer/portainer:latest
     restart: on-failure:5
-    ports:
-      - "127.0.0.1:9000:9000"
+    expose:
+      - "9000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.port=9000"
+      - "traefik.protocol=http"
+      - "traefik.frontend.rule=Host:ces-admin.localhost;PathPrefixStrip:/portainer/"
     networks:
-      - br0
+      backend-network:
+    #healthcheck:
+      #test: 'curl -f http://localhost:8000/ || exit 1'
+      #interval: 1m
+      #timeout: 15s
+      #retries: 5
+    #command:
+      #--ssl
+      #--sslcert /certs/portainer.crt
+      #--sslkey /certs/portainer.key
     stop_grace_period: 1m
+    mem_limit: 256M
+    cpu_shares: 20
+    cpu_quota: 50000
+    read_only: true
+    # privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
     volumes:
-      - type: bind
-        source: /home/engineer/portainer_data
-        target: /data
-      - "/var/run/docker.sock:/var/run/docker.sock"
+      - /home/engineer/portainer_data:/data
+      - /home/engineer/local-certs:/certs
+      - /var/run/docker.sock:/var/run/docker.sock
 # ------------------------------------------------------------------------------
-# networking settings
+  # Registry container
+  registry:
+    container_name: registry
+    image: registry:2
+    restart: on-failure:5
+    ports:
+      - "5000:5000"
+    expose:
+      - "5000"
+    labels:
+      - "traefik.enable=false"
+    networks:
+      frontend-network:
+      backend-network:
+    healthcheck:
+      test: 'stat /etc/passwd || exit 1'
+      interval: 30s
+      timeout: 15s
+      retries: 5
+    stop_grace_period: 1m
+    mem_limit: 256M
+    cpu_shares: 73
+    cpu_quota: 50000
+    read_only: true
+    # privileged: false
+    pids_limit: 1024
+    security_opt:
+      - "no-new-privileges:true"
+    # environment:
+    #   REGISTRY_HTTP_TLS_CERTIFICATE: /certs/domain.crt
+    #   REGISTRY_HTTP_TLS_KEY: /certs/domain.key
+    #   REGISTRY_AUTH: htpasswd
+    #   REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+    #   REGISTRY_AUTH_HTPASSWD_REALM: Registry Realm
+    volumes:
+      - /home/engineer/registry_data:/var/lib/registry
+      # - /path/certs:/certs
+      # - /path/auth:/auth
+# ------------------------------------------------------------------------------
+# Networking settings
 networks:
-  br0:
-    driver: bridge
-    ipam:
-      driver: default
-      config:
-      - subnet: 172.18.0.0/16
+  frontend-network:
+  backend-network:
